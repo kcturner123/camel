@@ -480,14 +480,9 @@ public abstract class RouteBuilder extends BuilderSupport implements RoutesBuild
                 }
             }
         }
-        camelContext.addRestDefinitions(getRestCollection().getRests());
+        // cannot add rests as routes yet as we need to initialize this specially
+        camelContext.addRestDefinitions(getRestCollection().getRests(), false);
 
-        // convert rests into routes so we they are routes for runtime
-        List<RouteDefinition> routes = new ArrayList<>();
-        for (RestDefinition rest : getRestCollection().getRests()) {
-            List<RouteDefinition> list = rest.asRouteDefinition(getContext());
-            routes.addAll(list);
-        }
         // convert rests api-doc into routes so they are routes for runtime
         for (RestConfiguration config : camelContext.getRestConfigurations()) {
             if (config.getApiContextPath() != null) {
@@ -504,15 +499,14 @@ public abstract class RouteBuilder extends BuilderSupport implements RoutesBuild
                 if (!hasRestApi) {
                     RouteDefinition route = RestDefinition.asRouteApiDefinition(camelContext, config);
                     log.debug("Adding routeId: {} as rest-api route", route.getId());
-                    routes.add(route);
+                    getRouteCollection().route(route);
                 }
             }
         }
-
-        // add the rest routes
-        for (RouteDefinition route : routes) {
-            getRouteCollection().route(route);
-        }
+        // add rest as routes and have them prepared as well via routeCollection.route method
+        getRestCollection().getRests()
+            .forEach(rest -> rest.asRouteDefinition(getContext())
+                .forEach(route -> getRouteCollection().route(route)));
     }
 
     protected void populateTransformers() {

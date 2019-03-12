@@ -33,7 +33,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
-import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -45,11 +44,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import javax.xml.bind.Unmarshaller;
 
 import org.apache.camel.AsyncProcessor;
 import org.apache.camel.CamelContext;
 import org.apache.camel.CamelContextAware;
+import org.apache.camel.CatalogCamelContext;
 import org.apache.camel.Component;
 import org.apache.camel.Consumer;
 import org.apache.camel.ConsumerTemplate;
@@ -189,7 +188,7 @@ import static org.apache.camel.spi.UnitOfWork.MDC_CAMEL_CONTEXT_ID;
 /**
  * Represents the context used to configure routes and the policies to use.
  */
-public abstract class AbstractCamelContext extends ServiceSupport implements ModelCamelContext, Suspendable {
+public abstract class AbstractCamelContext extends ServiceSupport implements ModelCamelContext, CatalogCamelContext, Suspendable {
 
     public enum Initialization {
         Eager, Default, Lazy
@@ -999,32 +998,11 @@ public abstract class AbstractCamelContext extends ServiceSupport implements Mod
         doWithDefinedClassLoader(() -> builder.addRoutesToCamelContext(AbstractCamelContext.this));
     }
 
-    public synchronized RoutesDefinition loadRoutesDefinition(InputStream is) throws Exception {
-        return ModelHelper.loadRoutesDefinition(this, is);
-    }
-
-    public synchronized RestsDefinition loadRestsDefinition(InputStream is) throws Exception {
-        // load routes using JAXB
-        Unmarshaller unmarshaller = getModelJAXBContextFactory().newJAXBContext().createUnmarshaller();
-        Object result = unmarshaller.unmarshal(is);
-
-        if (result == null) {
-            throw new IOException("Cannot unmarshal to rests using JAXB from input stream: " + is);
+    public void addRouteDefinitions(InputStream is) throws Exception {
+        RoutesDefinition def = ModelHelper.loadRoutesDefinition(this, is);
+        if (def != null) {
+            addRouteDefinitions(def.getRoutes());
         }
-
-        // can either be routes or a single route
-        RestsDefinition answer;
-        if (result instanceof RestDefinition) {
-            RestDefinition rest = (RestDefinition) result;
-            answer = new RestsDefinition();
-            answer.getRests().add(rest);
-        } else if (result instanceof RestsDefinition) {
-            answer = (RestsDefinition) result;
-        } else {
-            throw new IllegalArgumentException("Unmarshalled object is an unsupported type: " + ObjectHelper.className(result) + " -> " + result);
-        }
-
-        return answer;
     }
 
     public synchronized void addRouteDefinitions(Collection<RouteDefinition> routeDefinitions) throws Exception {
@@ -2608,12 +2586,26 @@ public abstract class AbstractCamelContext extends ServiceSupport implements Mod
         return restDefinitions;
     }
 
-    public void addRestDefinitions(Collection<RestDefinition> restDefinitions) throws Exception {
+    public void addRestDefinitions(InputStream is, boolean addToRoutes) throws Exception {
+        RestsDefinition rests = ModelHelper.loadRestsDefinition(this, is);
+        if (rests != null) {
+            addRestDefinitions(rests.getRests(), addToRoutes);
+        }
+    }
+
+    public synchronized void addRestDefinitions(Collection<RestDefinition> restDefinitions, boolean addToRoutes) throws Exception {
         if (restDefinitions == null || restDefinitions.isEmpty()) {
             return;
         }
 
         this.restDefinitions.addAll(restDefinitions);
+        if (addToRoutes) {
+            // rests are also routes so need to add them there too
+            for (final RestDefinition restDefinition : restDefinitions) {
+                List<RouteDefinition> routeDefinitions = restDefinition.asRouteDefinition(this);
+                addRouteDefinitions(routeDefinitions);
+            }
+        }
     }
 
     public RestConfiguration getRestConfiguration() {
